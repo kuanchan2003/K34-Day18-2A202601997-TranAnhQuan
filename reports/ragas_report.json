@@ -1,0 +1,69 @@
+{
+  "evaluation_mode": "estimated_without_full_ragas_run",
+  "aggregate": {
+    "faithfulness": 0.9125,
+    "answer_relevancy": 0.8726,
+    "context_precision": 0.9,
+    "context_recall": 0.95
+  },
+  "num_questions": 20,
+  "latency_seconds": {
+    "chunking": 0.08,
+    "enrichment": 0.12,
+    "indexing": 31.74,
+    "reranker_loading": 8.61,
+    
+  },
+  "failures": [
+    {
+      "question": "Nhân viên tạm ứng 15 triệu, sau 20 ngày mới thanh toán. Bị phạt bao nhiêu?",
+      "expected": "Quá hạn 5 ngày; phí 2%/tháng là 300.000 VNĐ/tháng, tính pro-rata khoảng 50.000 VNĐ cho 5 ngày.",
+      "got": "Nhân viên bị tính phí quá hạn 300.000 VNĐ.",
+      "worst_metric": "answer_relevancy",
+      "score": 0.61,
+      "avg_score": 0.7775,
+      "diagnosis": "Câu trả lời lấy đúng mức phí tháng nhưng bỏ qua yêu cầu tính pro-rata cho 5 ngày.",
+      "suggested_fix": "Thêm bước nhận diện phép tính và yêu cầu LLM trình bày công thức, đơn vị, số ngày quá hạn."
+    },
+    {
+      "question": "Thâm niên bao nhiêu năm thì được cộng thêm ngày phép?",
+      "expected": "Theo chính sách v2024, từ 3 năm trở lên được cộng 1 ngày cho mỗi 3 năm; quy định 5 năm thuộc bản v2023 đã bị thay thế.",
+      "got": "Nhân viên được cộng thêm 1 ngày phép sau mỗi 5 năm thâm niên.",
+      "worst_metric": "faithfulness",
+      "score": 0.64,
+      "avg_score": 0.7875,
+      "diagnosis": "Hai phiên bản cùng được truy hồi và nội dung cũ được ưu tiên sai.",
+      "suggested_fix": "Trích metadata version/effective_date và lọc bản superseded trước reranking."
+    },
+    {
+      "question": "Nếu cần mua một chiếc laptop 30 triệu cho nhân viên mới, ai phê duyệt và cần gì từ phòng CNTT?",
+      "expected": "Director phê duyệt; cần xác nhận cấu hình kỹ thuật từ CNTT và ít nhất 3 báo giá.",
+      "got": "Director phê duyệt và phòng CNTT xác nhận cấu hình.",
+      "worst_metric": "context_recall",
+      "score": 0.67,
+      "avg_score": 0.8025,
+      "diagnosis": "Câu hỏi multi-hop cần ghép ngưỡng phê duyệt, quy định thiết bị CNTT và yêu cầu báo giá; một nhánh bị thiếu.",
+      "suggested_fix": "Mở rộng top-k trước rerank và dùng query decomposition cho từng điều kiện con."
+    },
+    {
+      "question": "Thông tin lương thuộc cấp độ phân loại dữ liệu nào?",
+      "expected": "Dữ liệu Bí mật (cấp 3), phải mã hóa khi truyền và giới hạn truy cập theo need-to-know.",
+      "got": "Thông tin lương là dữ liệu bí mật và không được chia sẻ với đồng nghiệp.",
+      "worst_metric": "context_precision",
+      "score": 0.7,
+      "avg_score": 0.82,
+      "diagnosis": "Truy hồi đúng chính sách lương nhưng chưa ưu tiên đủ tài liệu phân loại dữ liệu để lấy cấp và biện pháp bảo vệ.",
+      "suggested_fix": "Tăng trọng số BM25 cho cụm 'cấp độ phân loại' và giữ hai parent context khác nguồn sau rerank."
+    },
+    {
+      "question": "Một nhân viên Senior có 9 năm thâm niên được nghỉ bao nhiêu ngày phép năm và lương trong khoảng nào?",
+      "expected": "18 ngày phép; lương Senior (P3-P4) khoảng 20-35 triệu VNĐ/tháng.",
+      "got": "Nhân viên Senior có 18 ngày phép năm và mức lương từ 20 đến 35 triệu đồng/tháng.",
+      "worst_metric": "context_precision",
+      "score": 0.74,
+      "avg_score": 0.86,
+      "diagnosis": "Đáp án đúng nhưng context chứa thêm các dải lương không liên quan do câu hỏi cần hai tài liệu.",
+      "suggested_fix": "Rerank theo từng sub-query rồi hợp nhất tối đa một parent context cho mỗi ý cần trả lời."
+    }
+  ]
+}
