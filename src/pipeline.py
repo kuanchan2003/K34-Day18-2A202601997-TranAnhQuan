@@ -1,8 +1,14 @@
 from __future__ import annotations
 
-"""Production RAG Pipeline — Bài tập NHÓM: ghép M1+M2+M3+M4."""
+"""Production RAG Pipeline — ghép M1 + M5 + M2 + M3 + M4."""
 
-import os, sys, time
+import os
+import sys
+import time
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -21,38 +27,56 @@ def build_pipeline():
     print("=" * 60, flush=True)
 
     # Step 1: Load & Chunk (M1)
-    t0 = time.time()
+    timings = {}
+    t0 = time.perf_counter()
     print("\n[1/4] Chunking documents...", flush=True)
     docs = load_documents()
     all_chunks = []
     for doc in docs:
         parents, children = chunk_hierarchical(doc["text"], metadata=doc["metadata"])
+        parent_lookup = {parent.metadata["parent_id"]: parent.text for parent in parents}
         for child in children:
-            all_chunks.append({"text": child.text, "metadata": {**child.metadata, "parent_id": child.parent_id}})
-    print(f"  ✓ {len(all_chunks)} chunks from {len(docs)} documents ({time.time()-t0:.1f}s)", flush=True)
+            all_chunks.append({
+                "text": child.text,
+                "metadata": {
+                    **child.metadata,
+                    "parent_id": child.parent_id,
+                    "parent_text": parent_lookup[child.parent_id],
+                },
+            })
+    timings["chunking"] = time.perf_counter() - t0
+    print(f"  ✓ {len(all_chunks)} chunks from {len(docs)} documents ({timings['chunking']:.1f}s)", flush=True)
 
     # Step 2: Enrichment (M5)
-    t0 = time.time()
+    t0 = time.perf_counter()
     print(f"\n[2/4] Enriching {len(all_chunks)} chunks (M5, 1 API call/chunk)...", flush=True)
     enriched = enrich_chunks(all_chunks)
     if enriched:
         all_chunks = [{"text": e.enriched_text, "metadata": e.auto_metadata} for e in enriched]
-        print(f"  ✓ Enriched {len(enriched)} chunks ({time.time()-t0:.1f}s)", flush=True)
+        timings["enrichment"] = time.perf_counter() - t0
+        print(f"  ✓ Enriched {len(enriched)} chunks ({timings['enrichment']:.1f}s)", flush=True)
     else:
-        print("  ⚠️  M5 not implemented — using raw chunks", flush=True)
+        timings["enrichment"] = time.perf_counter() - t0
+        print("  ⚠️  Enrichment returned no chunks — using raw chunks", flush=True)
 
     # Step 3: Index (M2)
-    t0 = time.time()
+    t0 = time.perf_counter()
     print(f"\n[3/4] Indexing {len(all_chunks)} chunks (BM25 + Dense)...", flush=True)
     search = HybridSearch()
     search.index(all_chunks)
-    print(f"  ✓ Indexed ({time.time()-t0:.1f}s)", flush=True)
+    timings["indexing"] = time.perf_counter() - t0
+    print(f"  ✓ Indexed ({timings['indexing']:.1f}s)", flush=True)
 
     # Step 4: Reranker (M3)
-    t0 = time.time()
+    t0 = time.perf_counter()
     print("\n[4/4] Loading reranker...", flush=True)
     reranker = CrossEncoderReranker()
-    print(f"  ✓ Reranker ready ({time.time()-t0:.1f}s)", flush=True)
+    # Load here so initialization time is measured instead of deferred to query 1.
+    reranker._load_model()
+    timings["reranker_loading"] = time.perf_counter() - t0
+    print(f"  ✓ Reranker ready ({timings['reranker_loading']:.1f}s)", flush=True)
+
+    search.pipeline_timings = timings
 
     return search, reranker
 
@@ -62,7 +86,16 @@ def run_query(query: str, search: HybridSearch, reranker: CrossEncoderReranker) 
     results = search.search(query)
     docs = [{"text": r.text, "score": r.score, "metadata": r.metadata} for r in results]
     reranked = reranker.rerank(query, docs, top_k=RERANK_TOP_K)
-    contexts = [r.text for r in reranked] if reranked else [r.text for r in results[:3]]
+    selected = reranked if reranked else results[:3]
+    # Hierarchical retrieval searches precise children but gives the generator
+    # their larger parents. De-duplicate when several children share a parent.
+    contexts = []
+    seen = set()
+    for result in selected:
+        context = result.metadata.get("parent_text") or result.text
+        if context not in seen:
+            contexts.append(context)
+            seen.add(context)
 
     from config import OPENAI_API_KEY
     if OPENAI_API_KEY and contexts:
@@ -71,7 +104,11 @@ def run_query(query: str, search: HybridSearch, reranker: CrossEncoderReranker) 
             client = OpenAI()
             context_str = "\n\n".join(contexts)
             resp = client.chat.completions.create(model="gpt-4o-mini", messages=[
-                {"role": "system", "content": "Trả lời CHỈ dựa trên context. Nếu không có → nói 'Không tìm thấy.'"},
+                {"role": "system", "content": (
+                    "Trả lời ngắn gọn bằng tiếng Việt và CHỈ dựa trên context. "
+                    "Nếu có nhiều phiên bản chính sách, ưu tiên bản mới nhất/hiện hành và nêu rõ bản cũ đã bị thay thế. "
+                    "Giữ chính xác phủ định, con số và đơn vị. Nếu context không đủ, nói 'Không tìm thấy.'"
+                )},
                 {"role": "user", "content": f"Context:\n{context_str}\n\nCâu hỏi: {query}"},
             ])
             answer = resp.choices[0].message.content
@@ -97,10 +134,11 @@ def evaluate_pipeline(search: HybridSearch, reranker: CrossEncoderReranker):
         ground_truths.append(item["ground_truth"])
         print(f"  [{i+1}/{len(test_set)}] {item['question'][:50]}...", flush=True)
 
-    t0 = time.time()
+    t0 = time.perf_counter()
     print(f"\n[Eval] Running RAGAS (4 metrics × {len(test_set)} questions)...", flush=True)
     results = evaluate_ragas(questions, answers, all_contexts, ground_truths)
-    print(f"  ✓ RAGAS done ({time.time()-t0:.1f}s)", flush=True)
+    eval_seconds = time.perf_counter() - t0
+    print(f"  ✓ RAGAS done ({eval_seconds:.1f}s)", flush=True)
 
     print("\n" + "=" * 60)
     print("PRODUCTION RAG SCORES")
@@ -109,8 +147,10 @@ def evaluate_pipeline(search: HybridSearch, reranker: CrossEncoderReranker):
         s = results.get(m, 0)
         print(f"  {'✓' if s >= 0.75 else '✗'} {m}: {s:.4f}")
 
-    failures = failure_analysis(results.get("per_question", []))
-    save_report(results, failures)
+    failures = failure_analysis(results.get("per_question", []), bottom_n=5)
+    timings = {**getattr(search, "pipeline_timings", {}), "evaluation": eval_seconds}
+    timings["total_recorded"] = sum(timings.values())
+    save_report(results, failures, extra={"latency_seconds": timings})
     return results
 
 

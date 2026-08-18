@@ -7,6 +7,10 @@ Basic = paragraph chunking + dense-only search (không hybrid, không rerank, kh
 
 import sys, os, time
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from src.m1_chunking import load_documents, chunk_basic
@@ -67,7 +71,7 @@ def main():
     print("\nBASIC BASELINE SCORES")
     for m in ["faithfulness", "answer_relevancy", "context_precision", "context_recall"]:
         print(f"  {m}: {results.get(m, 0):.4f}")
-    save_report(results, [], path="naive_baseline_report.json")
+    save_report(results, [], path="reports/naive_baseline_report.json")
     print("\nDone! Now implement advanced modules and run: python main.py")
 
 

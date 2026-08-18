@@ -10,6 +10,11 @@ Usage:
 import json
 import os
 import time
+import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
 def main():
@@ -32,11 +37,6 @@ def main():
     from src.pipeline import build_pipeline, evaluate_pipeline
     search, reranker = build_pipeline()
     prod_results = evaluate_pipeline(search, reranker)
-
-    # Move reports to reports/
-    for f in ["ragas_report.json", "naive_baseline_report.json"]:
-        if os.path.exists(f):
-            os.rename(f, f"reports/{f}")
 
     # Step 3: Comparison
     print("\n📌 STEP 3: Comparison")

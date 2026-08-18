@@ -2,7 +2,9 @@ from __future__ import annotations
 
 """Module 3: Reranking — Cross-encoder top-20 → top-3 + latency benchmark."""
 
-import os, sys, time
+import os
+import sys
+import time
 from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,28 +27,40 @@ class CrossEncoderReranker:
 
     def _load_model(self):
         if self._model is None:
-            # TODO: Load cross-encoder model
-            # from sentence_transformers import CrossEncoder
-            # self._model = CrossEncoder(self.model_name)
-            #
-            # ⚠️ LƯU Ý: Dùng sentence_transformers.CrossEncoder, KHÔNG dùng FlagEmbedding.
+            # Dùng sentence_transformers.CrossEncoder, KHÔNG dùng FlagEmbedding.
             # FlagReranker crash với transformers>=5.0 (XLMRobertaTokenizer lỗi).
-            pass
+            from sentence_transformers import CrossEncoder
+            self._model = CrossEncoder(self.model_name)
         return self._model
 
     def rerank(self, query: str, documents: list[dict], top_k: int = RERANK_TOP_K) -> list[RerankResult]:
         """Rerank documents: top-20 → top-k."""
-        # TODO: Implement reranking
-        # 1. if not documents: return []
-        # 2. model = self._load_model()
-        # 3. pairs = [(query, doc["text"]) for doc in documents]
-        # 4. scores = model.predict(pairs)
-        # 5. if isinstance(scores, (int, float)): scores = [scores]
-        # 6. scored = sorted(zip(scores, documents), key=lambda x: x[0], reverse=True)
-        # 7. Return [RerankResult(text=..., original_score=doc.get("score", 0.0),
-        #            rerank_score=float(score), metadata=..., rank=i)
-        #            for i, (score, doc) in enumerate(scored[:top_k])]
-        return []
+        # Xử lý list rỗng trước khi load model
+        if not documents:
+            return []
+
+        model = self._load_model()
+        # Tạo (query, doc["text"]) pairs
+        pairs = [(query, doc["text"]) for doc in documents]
+        # Gọi predict để lấy rerank scores
+        scores = model.predict(pairs)
+        if isinstance(scores, (int, float)):
+            scores = [scores]
+
+        # Sort theo rerank_score giảm dần
+        scored = sorted(zip(scores, documents), key=lambda x: float(x[0]), reverse=True)
+
+        # Trả tối đa top_k RerankResult, giữ original_score, metadata và rank
+        return [
+            RerankResult(
+                text=doc["text"],
+                original_score=doc.get("score", 0.0),
+                rerank_score=float(score),
+                metadata=doc.get("metadata", {}),
+                rank=i,
+            )
+            for i, (score, doc) in enumerate(scored[:max(top_k, 0)], start=1)
+        ]
 
 
 class FlashrankReranker:
@@ -55,14 +69,14 @@ class FlashrankReranker:
         self._model = None
 
     def rerank(self, query: str, documents: list[dict], top_k: int = RERANK_TOP_K) -> list[RerankResult]:
-        # TODO (optional): from flashrank import Ranker, RerankRequest
-        # model = Ranker(); passages = [{"text": d["text"]} for d in documents]
-        # results = model.rerank(RerankRequest(query=query, passages=passages))
+        """Optional extension point for a lightweight reranker."""
         return []
 
 
 def benchmark_reranker(reranker, query: str, documents: list[dict], n_runs: int = 5) -> dict:
     """Benchmark latency over n_runs. (Đã implement sẵn)"""
+    if n_runs <= 0:
+        raise ValueError("n_runs must be positive")
     times = []
     for _ in range(n_runs):
         start = time.perf_counter()
